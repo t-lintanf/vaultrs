@@ -113,6 +113,31 @@ impl VaultClient {
             http_client = http_client.add_root_certificate(cert);
         }
 
+        if let Some(cert_path) = &settings.client_cert {
+            let key_path = settings
+                .client_key
+                .as_ref()
+                .expect("Key path should be set when using client cert"); // We check in validate
+            let cert_data = std::fs::read(cert_path).map_err(|e| ClientError::FileReadError {
+                source: e,
+                path: cert_path.clone(),
+            })?;
+            let key_data = std::fs::read(key_path).map_err(|e| ClientError::FileReadError {
+                source: e,
+                path: key_path.clone(),
+            })?;
+
+            let identity = reqwest::Identity::from_pem(
+                &[cert_data, vec![b'\n'], key_data].concat(),
+            )
+            .map_err(|e| ClientError::ParseIdentityError {
+                source: e,
+                cert_path: cert_path.clone(),
+                key_path: key_path.clone(),
+            })?;
+            http_client = http_client.identity(identity);
+        }
+
         // Configures middleware for endpoints to append API version and token
         debug!("Using API version {}", settings.version);
         let version_str = format!("v{}", settings.version);
@@ -166,6 +191,10 @@ pub struct VaultClientSettings {
     pub wrapping: bool,
     #[builder(default)]
     pub namespace: Option<String>,
+    #[builder(default = "self.default_client_cert()")]
+    pub client_cert: Option<String>,
+    #[builder(default = "self.default_client_key()")]
+    pub client_key: Option<String>,
 }
 
 impl VaultClientSettingsBuilder {
@@ -249,7 +278,27 @@ impl VaultClientSettingsBuilder {
         paths
     }
 
+    fn default_client_cert(&self) -> Option<String> {
+        if let Ok(s) = env::var("VAULT_CLIENT_CERT") {
+            info!("Found client certificate in $VAULT_CLIENT_CERT");
+            Some(s)
+        } else {
+            None
+        }
+    }
+
+    fn default_client_key(&self) -> Option<String> {
+        if let Ok(s) = env::var("VAULT_CLIENT_KEY") {
+            info!("Found client key in $VAULT_CLIENT_KEY");
+            Some(s)
+        } else {
+            None
+        }
+    }
+
     fn validate(&self) -> Result<(), String> {
+        self.validate_client_cert()?;
+
         // Verify URL is valid
         if let Some(url) = &self.address {
             self.validate_url(url)
@@ -260,8 +309,21 @@ impl VaultClientSettingsBuilder {
 
     fn validate_url(&self, url: &Url) -> Result<(), String> {
         // Verify scheme is valid HTTP endpoint
+
         if !VALID_SCHEMES.contains(&url.scheme()) {
             Err(format!("Invalid scheme for HTTP URL: {}", url.scheme()))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn validate_client_cert(&self) -> Result<(), String> {
+        if let Some(Some(_cert_path)) = &self.client_cert {
+            if let Some(Some(_key_path)) = &self.client_key {
+                Ok(())
+            } else {
+                Err("Client certificate path provided without providing key path".to_string())
+            }
         } else {
             Ok(())
         }

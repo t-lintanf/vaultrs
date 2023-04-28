@@ -4,3 +4,4 @@ pub mod aws;
 #[cfg(feature = "oidc")]
 pub mod oidc;
 pub mod userpass;
+pub mod cert;

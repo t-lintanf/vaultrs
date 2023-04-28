@@ -26,6 +26,12 @@ pub enum ClientError {
         source: reqwest::Error,
         path: String,
     },
+    #[error("Error parsing client certificate '{cert_path}' or key '{key_path}' ")]
+    ParseIdentityError {
+        source: reqwest::Error,
+        cert_path: String,
+        key_path: String,
+    },
     #[error("The request returned an empty response")]
     ResponseEmptyError,
     #[error("The result contained an empty data field")]
